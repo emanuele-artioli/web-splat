@@ -1,4 +1,4 @@
-// const MAX_SH_DEG:u32 = <injected>u;
+enable f16;
 
 const SH_C0:f32 = 0.28209479177387814;
 
@@ -54,16 +54,13 @@ struct GaussianSplat {
 };
 
 struct GeometricInfo {
-    cov: array<u32, 3>,
+    cov: array<vec2<f16>, 3>,
 };
 
 struct Splat {
-     // 4x f16 packed as u32
-    v_0: u32, v_1: u32,
-    // 2x f16 packed as u32
-    pos: u32,
-    // rgba packed as u8
-    color_0: u32,color_1: u32,
+    v_0: vec2<f16>, v_1: vec2<f16>,
+    pos: vec2<f16>,
+    color_0: vec2<f16>, color_1: vec2<f16>,
 };
 
 // struct DrawIndirect {
@@ -101,6 +98,8 @@ struct RenderSettings {
     kernel_size: f32,
     walltime: f32,
     scene_extend: f32,
+    splat_size_threshold: f32,
+    render_scale: f32,
     center: vec3<f32>,
 }
 
@@ -237,9 +236,9 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
     let scaling_factor = exp(dequantize(extractBits(i32(vertex.opacity_scale), 1u * 8u, 8u), quantization.scaling_factor));
 
     let s2 = scaling_factor * scaling_factor;
-    let cov1: vec2<f32> = unpack2x16float(geometric_info.cov[0]) * s2;
-    let cov2: vec2<f32> = unpack2x16float(geometric_info.cov[1]) * s2;
-    let cov3: vec2<f32> = unpack2x16float(geometric_info.cov[2]) * s2;
+    let cov1: vec2<f32> = vec2<f32>(geometric_info.cov[0]) * s2;
+    let cov2: vec2<f32> = vec2<f32>(geometric_info.cov[1]) * s2;
+    let cov3: vec2<f32> = vec2<f32>(geometric_info.cov[2]) * s2;
 
     let walltime = render_settings.walltime;
     var scale_mod = 0.;
@@ -313,9 +312,9 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
     let store_idx = atomicAdd(&sort_infos.keys_size, 1u);
     let v = vec4<f32>(v1 / viewport, v2 / viewport);
     points_2d[store_idx] = Splat(
-        pack2x16float(v.xy), pack2x16float(v.zw),
-        pack2x16float(v_center.xy),
-        pack2x16float(color.rg), pack2x16float(color.ba),
+        vec2<f16>(v.xy), vec2<f16>(v.zw),
+        vec2<f16>(v_center.xy),
+        vec2<f16>(color.rg), vec2<f16>(color.ba),
     );
     
     // filling the sorting buffers and the indirect sort dispatch buffer

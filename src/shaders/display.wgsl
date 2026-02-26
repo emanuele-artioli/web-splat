@@ -34,6 +34,44 @@ struct VertexOut {
     @location(0) tex_coord: vec2<f32>,
 }
 
+fn sinc(x: f32) -> f32 {
+    if (abs(x) < 1e-5) { return 1.0; }
+    let px = PI * x;
+    return sin(px) / px;
+}
+
+fn lanczos2_weight(x: f32) -> f32 {
+    if (abs(x) < 2.0) {
+        return sinc(x) * sinc(x / 2.0);
+    }
+    return 0.0;
+}
+
+fn textureSampleLanczos(t: texture_2d<f32>, s: sampler, uv: vec2<f32>) -> vec4<f32> {
+    let size = vec2<f32>(textureDimensions(t));
+    let texel_coords = uv * size - 0.5;
+    let f_coords = floor(texel_coords);
+    let frac = fract(texel_coords);
+
+    var color = vec4<f32>(0.0);
+    var total_weight = 0.0;
+
+    // 4x4 loop for Lanczos-2
+    for (var y: f32 = -1.0; y <= 2.0; y += 1.0) {
+        let weight_y = lanczos2_weight(y - frac.y);
+        for (var x: f32 = -1.0; x <= 2.0; x += 1.0) {
+            let weight_x = lanczos2_weight(x - frac.x);
+            let weight = weight_x * weight_y;
+            
+            let sample_uv = (f_coords + vec2(x, y) + 0.5) / size;
+            color += textureSampleLevel(t, s, sample_uv, 0.0) * weight;
+            total_weight += weight;
+        }
+    }
+
+    return color / total_weight;
+}
+
 @vertex
 fn vs_main(
     @builtin(vertex_index) in_vertex_index: u32,
@@ -50,6 +88,6 @@ fn vs_main(
 
 @fragment
 fn fs_main(vertex_in: VertexOut) -> @location(0) vec4<f32> {
-    let color = textureSample(source_img, texture_sampler, vertex_in.tex_coord);
+    let color = textureSampleLanczos(source_img, texture_sampler, vertex_in.tex_coord);
     return color;
 }

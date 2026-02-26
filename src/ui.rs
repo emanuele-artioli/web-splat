@@ -130,6 +130,16 @@ pub(crate) fn ui(state: &mut WindowContext) -> bool {
                 state.splatting_args.background_color.a = color32[3] as f64;
 
                 ui.end_row();
+                ui.label("Render Scale");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut state.splatting_args.render_scale, 1, "1x");
+                    ui.selectable_value(&mut state.splatting_args.render_scale, 2, "2x");
+                    ui.selectable_value(&mut state.splatting_args.render_scale, 4, "4x");
+                    ui.selectable_value(&mut state.splatting_args.render_scale, 8, "8x");
+                    ui.selectable_value(&mut state.splatting_args.render_scale, 16, "16x");
+                });
+
+                ui.end_row();
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     ui.label("Dilation Kernel Size");

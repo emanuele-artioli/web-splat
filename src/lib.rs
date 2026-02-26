@@ -82,12 +82,14 @@ impl WGPUContext {
         log::info!("using apdater \"{}\"", adapter.get_info().name);
 
         #[cfg(target_arch = "wasm32")]
-        let required_features = wgpu::Features::default();
+        let required_features = wgpu::Features::SUBGROUP;
         #[cfg(not(target_arch = "wasm32"))]
         let required_features = wgpu::Features::TIMESTAMP_QUERY
             | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
             | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-            | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+            | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+            | wgpu::Features::SUBGROUP
+            | wgpu::Features::SHADER_F16;
 
         let adapter_limits = adapter.limits();
 
@@ -175,7 +177,6 @@ impl WindowContext {
         let wgpu_context = WGPUContext::new(&instance, Some(&surface)).await;
 
         let device = &wgpu_context.device;
-        let queue = &wgpu_context.queue;
 
         let surface_caps = surface.get_capabilities(&wgpu_context.adapter);
 
@@ -214,7 +215,7 @@ impl WindowContext {
         log::info!("loaded point cloud with {:} points", pc.num_points());
 
         let renderer =
-            GaussianRenderer::new(&device, &queue, render_format, pc.sh_deg(), pc.compressed())
+            GaussianRenderer::new(&device, render_format, pc.compressed())
                 .await;
 
         let aabb = pc.bbox();
@@ -249,6 +250,8 @@ impl WindowContext {
             None
         };
 
+        log::info!("window scale factor: {}", window.scale_factor());
+
         Ok(Self {
             wgpu_context,
             scale_factor: window.scale_factor() as f32,
@@ -268,6 +271,8 @@ impl WindowContext {
                 scene_center: None,
                 scene_extend: None,
                 background_color: wgpu::Color::BLACK,
+                render_scale: 1,
+                splat_size_threshold: None,
             },
             pc,
             // camera: view_camera,
@@ -315,8 +320,13 @@ impl WindowContext {
             self.config.height = new_size.height;
             self.surface
                 .configure(&self.wgpu_context.device, &self.config);
+
+            // Resize display with render scale
+            let scaled_width = new_size.width / self.splatting_args.render_scale;
+            let scaled_height = new_size.height / self.splatting_args.render_scale;
             self.display
-                .resize(&self.wgpu_context.device, new_size.width, new_size.height);
+                .resize(&self.wgpu_context.device, scaled_width, scaled_height);
+
             self.splatting_args
                 .camera
                 .projection
@@ -326,12 +336,31 @@ impl WindowContext {
                 .camera
                 .projection
                 .resize(new_size.width, new_size.height);
+            self.render(true, None).ok();
         }
         if let Some(scale_factor) = scale_factor {
             if scale_factor > 0. {
                 self.scale_factor = scale_factor;
             }
         }
+    }
+
+    fn set_render_scale(&mut self, scale: u32) {
+        self.splatting_args.render_scale = scale;
+        let scaled_width = self.config.width / scale;
+        let scaled_height = self.config.height / scale;
+        self.display
+            .resize(&self.wgpu_context.device, scaled_width, scaled_height);
+
+        self.splatting_args
+            .camera
+            .projection
+            .resize(scaled_width, scaled_height);
+        self.splatting_args.viewport = Vector2::new(scaled_width, scaled_height);
+        self.splatting_args
+            .camera
+            .projection
+            .resize(scaled_width, scaled_height);
     }
 
     /// returns whether redraw is required
@@ -418,12 +447,20 @@ impl WindowContext {
                 });
 
         if redraw_scene {
+            // Adjust viewport for render scale
+            let scaled_viewport = Vector2::new(
+                self.config.width / self.splatting_args.render_scale,
+                self.config.height / self.splatting_args.render_scale,
+            );
+            let mut scaled_args = self.splatting_args;
+            scaled_args.viewport = scaled_viewport;
+
             self.renderer.prepare(
                 &mut encoder,
                 &self.wgpu_context.device,
                 &self.wgpu_context.queue,
                 &self.pc,
-                self.splatting_args,
+                scaled_args,
                 (&mut self.stopwatch).into(),
             );
         }
@@ -827,6 +864,11 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
                 let (redraw_ui,shapes) = state.ui();
 
                 let resolution_change = state.splatting_args.viewport != Vector2::new(state.config.width, state.config.height);
+                let scale_change = old_settings.render_scale != state.splatting_args.render_scale;
+                // Handle render scale change
+                if scale_change {
+                    state.set_render_scale(state.splatting_args.render_scale);
+                }
 
                 let request_redraw = old_settings != state.splatting_args || resolution_change;
 

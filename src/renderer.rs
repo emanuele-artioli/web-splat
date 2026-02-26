@@ -32,9 +32,7 @@ pub struct GaussianRenderer {
 impl GaussianRenderer {
     pub async fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
         color_format: wgpu::TextureFormat,
-        sh_deg: u32,
         compressed: bool,
     ) -> Self {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -102,10 +100,10 @@ impl GaussianRenderer {
             }],
         });
 
-        let sorter = GPURSSorter::new(device, queue).await;
+        let sorter = GPURSSorter::new(device);
 
         let camera = UniformBuffer::new_default(device, Some("camera uniform buffer"));
-        let preprocess = PreprocessPipeline::new(device, sh_deg, compressed);
+        let preprocess = PreprocessPipeline::new(device, compressed);
         GaussianRenderer {
             pipeline,
             camera,
@@ -345,7 +343,7 @@ impl CameraUniform {
 struct PreprocessPipeline(wgpu::ComputePipeline);
 
 impl PreprocessPipeline {
-    fn new(device: &wgpu::Device, sh_deg: u32, compressed: bool) -> Self {
+    fn new(device: &wgpu::Device, compressed: bool) -> Self {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("preprocess pipeline layout"),
             bind_group_layouts: &[
@@ -363,7 +361,7 @@ impl PreprocessPipeline {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("preprocess shader"),
-            source: wgpu::ShaderSource::Wgsl(Self::build_shader(sh_deg, compressed).into()),
+            source: wgpu::ShaderSource::Wgsl(Self::build_shader(compressed).into()),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("preprocess pipeline"),
@@ -376,19 +374,13 @@ impl PreprocessPipeline {
         Self(pipeline)
     }
 
-    fn build_shader(sh_deg: u32, compressed: bool) -> String {
+    fn build_shader(compressed: bool) -> String {
         let shader_src: &str = if !compressed {
             include_str!("shaders/preprocess.wgsl")
         } else {
             include_str!("shaders/preprocess_compressed.wgsl")
         };
-        let shader = format!(
-            "
-        const MAX_SH_DEG:u32 = {:}u;
-        {:}",
-            sh_deg, shader_src
-        );
-        return shader;
+        return shader_src.to_owned();
     }
 
     fn run<'a>(
@@ -502,8 +494,8 @@ impl Display {
         });
         let texture_view = texture.create_view(&Default::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -597,6 +589,8 @@ pub struct SplattingArgs {
     pub scene_center: Option<Point3<f32>>,
     pub scene_extend: Option<f32>,
     pub background_color: wgpu::Color,
+    pub render_scale: u32,
+    pub splat_size_threshold: Option<f32>, // Minimum splat size to render (in pixels)
 }
 
 pub const DEFAULT_KERNEL_SIZE: f32 = 0.3;
@@ -613,7 +607,8 @@ pub struct SplattingArgsUniform {
 
     walltime: f32,
     scene_extend: f32,
-    _pad: [u32; 2],
+    splat_size_threshold: f32,
+    render_scale: f32,
 
     scene_center: Vector4<f32>,
 }
@@ -621,6 +616,13 @@ pub struct SplattingArgsUniform {
 impl SplattingArgsUniform {
     /// replaces values with default values for point cloud
     pub fn from_args_and_pc(args: SplattingArgs, pc: &PointCloud) -> Self {
+        let base_kernel_size = args
+            .kernel_size
+            .unwrap_or(pc.dilation_kernel_size().unwrap_or(DEFAULT_KERNEL_SIZE));
+
+        // Scale kernel size based on render scale to maintain consistent appearance
+        let scaled_kernel_size = base_kernel_size / args.render_scale as f32;
+
         Self {
             gaussian_scaling: args.gaussian_scaling,
             max_sh_deg: args.max_sh_deg,
@@ -628,9 +630,7 @@ impl SplattingArgsUniform {
                 .mip_splatting
                 .map(|v| v as u32)
                 .unwrap_or(pc.mip_splatting().unwrap_or(false) as u32),
-            kernel_size: args
-                .kernel_size
-                .unwrap_or(pc.dilation_kernel_size().unwrap_or(DEFAULT_KERNEL_SIZE)),
+            kernel_size: scaled_kernel_size,
             clipping_box_min: args
                 .clipping_box
                 .map_or(pc.bbox().min, |b| b.min)
@@ -647,6 +647,8 @@ impl SplattingArgsUniform {
                 .scene_extend
                 .unwrap_or(pc.bbox().radius())
                 .max(pc.bbox().radius()),
+            splat_size_threshold: args.splat_size_threshold.unwrap_or(0.0),
+            render_scale: args.render_scale as f32,
             ..Default::default()
         }
     }
@@ -669,7 +671,8 @@ impl Default for SplattingArgsUniform {
             walltime: 0.,
             scene_center: Vector4::new(0., 0., 0., 0.),
             scene_extend: 1.,
-            _pad: [0; 2],
+            splat_size_threshold: 0.0,
+            render_scale: 1.0,
         }
     }
 }

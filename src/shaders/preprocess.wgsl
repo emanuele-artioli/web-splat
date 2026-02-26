@@ -1,5 +1,6 @@
+enable f16;
+
 const KERNEL_SIZE:f32 = 0.3;
-//const MAX_SH_DEG:u32 = <injected>u;
 
 const SH_C0:f32 = 0.28209479177387814;
 
@@ -35,17 +36,14 @@ struct CameraUniforms {
 
 struct Gaussian {
     x:f32,y:f32,z:f32,
-    opacity: u32,
-    cov: array<u32,3>
+    opacity: vec2<f16>,
+    cov: array<vec2<f16>,3>
 }
 
 struct Splat {
-     // 4x f16 packed as u32
-    v_0: u32, v_1: u32,
-    // 2x f16 packed as u32
-    pos: u32,
-    // rgba packed as f16
-    color_0: u32,color_1: u32
+    v_0: vec2<f16>, v_1: vec2<f16>,
+    pos: vec2<f16>,
+    color: vec2<f16>, color_1: vec2<f16> // dont use vec4 to avoid alignment issues
 };
 
 struct DrawIndirect {
@@ -83,6 +81,8 @@ struct RenderSettings {
     kernel_size: f32,
     walltime: f32,
     scene_extend: f32,
+    splat_size_threshold: f32,
+    render_scale: f32,
     center: vec3<f32>,
 }
 
@@ -92,7 +92,7 @@ var<uniform> camera: CameraUniforms;
 @group(1) @binding(0) 
 var<storage,read> gaussians : array<Gaussian>;
 @group(1) @binding(1) 
-var<storage,read> sh_coefs : array<array<u32,24>>;
+var<storage,read> sh_coefs : array<array<f16,48>>;
 
 @group(1) @binding(2) 
 var<storage,read_write> points_2d : array<Splat>;
@@ -112,11 +112,10 @@ var<uniform> render_settings: RenderSettings;
 
 /// reads the ith sh coef from the vertex buffer
 fn sh_coef(splat_idx: u32, c_idx: u32) -> vec3<f32> {
-    let a = unpack2x16float(sh_coefs[splat_idx][(c_idx * 3u + 0u) / 2u])[(c_idx * 3u + 0u) % 2u];
-    let b = unpack2x16float(sh_coefs[splat_idx][(c_idx * 3u + 1u) / 2u])[(c_idx * 3u + 1u) % 2u];
-    let c = unpack2x16float(sh_coefs[splat_idx][(c_idx * 3u + 2u) / 2u])[(c_idx * 3u + 2u) % 2u];
     return vec3<f32>(
-        a, b, c
+        f32(sh_coefs[splat_idx][c_idx * 3u + 0u]),
+        f32(sh_coefs[splat_idx][c_idx * 3u + 1u]),
+        f32(sh_coefs[splat_idx][c_idx * 3u + 2u])
     );
 }
 
@@ -154,9 +153,9 @@ fn evaluate_sh(dir: vec3<f32>, v_idx: u32, sh_deg: u32) -> vec3<f32> {
 }
 
 fn cov_coefs(v_idx: u32) -> array<f32,6> {
-    let a = unpack2x16float(gaussians[v_idx].cov[0]);
-    let b = unpack2x16float(gaussians[v_idx].cov[1]);
-    let c = unpack2x16float(gaussians[v_idx].cov[2]);
+    let a = vec2<f32>(gaussians[v_idx].cov[0]);
+    let b = vec2<f32>(gaussians[v_idx].cov[1]);
+    let c = vec2<f32>(gaussians[v_idx].cov[2]);
     return array<f32,6>(a.x, a.y, b.x, b.y, c.x, c.y);
 }
 
@@ -170,9 +169,8 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
     let focal = camera.focal;
     let viewport = camera.viewport;
     let vertex = gaussians[idx];
-    let a = unpack2x16float(vertex.opacity);
     let xyz = vec3<f32>(vertex.x, vertex.y, vertex.z);
-    var opacity = a.x;
+    var opacity = f32(vertex.opacity.x);
 
     if any(xyz < render_settings.clipping_box_min.xyz) || any(xyz > render_settings.clipping_box_max.xyz) {
         return;
@@ -223,6 +221,9 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
     let cov = transpose(T) * Vrk * T;
 
     let kernel_size = render_settings.kernel_size;
+
+
+
     if bool(render_settings.mip_spatting) {
         // according to Mip-Splatting by Yu et al. 2023
         let det_0 = max(1e-6, cov[0][0] * cov[1][1] - cov[0][1] * cov[0][1]);
@@ -245,6 +246,7 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
     let lambda1 = mid + radius;
     let lambda2 = max(mid - radius, 0.1);
 
+
     let diagonalVector = normalize(vec2<f32>(offDiagonal, lambda1 - diagonal1));
     // scaled eigenvectors in screen space 
     let v1 = sqrt(2.0 * lambda1) * diagonalVector;
@@ -262,9 +264,9 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
     let store_idx = atomicAdd(&sort_infos.keys_size, 1u);
     let v = vec4<f32>(v1 / viewport, v2 / viewport);
     points_2d[store_idx] = Splat(
-        pack2x16float(v.xy), pack2x16float(v.zw),
-        pack2x16float(v_center.xy),
-        pack2x16float(color.rg), pack2x16float(color.ba),
+        vec2<f16>(v.xy), vec2<f16>(v.zw),
+        vec2<f16>(v_center.xy),
+        vec2<f16>(color.rg), vec2<f16>(color.ba),
     );
     // filling the sorting buffers and the indirect sort dispatch buffer
     let znear = -camera.proj[3][2] / camera.proj[2][2];

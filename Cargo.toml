@@ -43,7 +43,7 @@ splines = { features = [
 ], git = "https://github.com/KeKsBoTer/splines" }
 
 [dev-dependencies]
-wasm-bindgen-cli = "0.2.113"
+# wasm-bindgen-cli = "0.2.113"
 
 [lib]
 path = "src/lib.rs"

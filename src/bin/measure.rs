@@ -8,8 +8,8 @@ use std::{
 };
 #[allow(unused_imports)]
 use web_splats::{
-    io, GaussianRenderer, PerspectiveCamera, PointCloud, Scene, SceneCamera, SplattingArgs, Split,
-    WGPUContext,
+    GaussianRenderer, PerspectiveCamera, PointCloud, Scene, SceneCamera, SplattingArgs, Split,
+    WGPUContext, io,
 };
 
 #[derive(Debug, Parser)]
@@ -73,6 +73,8 @@ async fn render_views(
             scene_center: None,
             scene_extend: None,
             background_color: wgpu::Color::TRANSPARENT,
+            render_scale: 1,
+            splat_size_threshold: None,
         },
         &mut None,
     );
@@ -86,6 +88,7 @@ async fn render_views(
                     load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                     store: wgpu::StoreOp::Store,
                 },
+                depth_slice: None,
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
@@ -121,6 +124,8 @@ async fn render_views(
                     scene_center: None,
                     scene_extend: None,
                     background_color: wgpu::Color::TRANSPARENT,
+                    render_scale: 1,
+                    splat_size_threshold: None,
                 },
                 &mut None,
             );
@@ -134,6 +139,7 @@ async fn render_views(
                             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                             store: wgpu::StoreOp::Store,
                         },
+                        depth_slice: None,
                     })],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
@@ -144,7 +150,7 @@ async fn render_views(
             queue.submit(std::iter::once(encoder.finish()));
         }
     }
-    device.poll(wgpu::MaintainBase::Wait);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let end = Instant::now();
     let duration = end - start;
     println!(
