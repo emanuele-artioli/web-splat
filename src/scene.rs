@@ -7,7 +7,7 @@ use std::{
 use cgmath::{Matrix3, MetricSpace, Point3, SquareMatrix, Vector2};
 use serde::{Deserialize, Serialize};
 
-use crate::camera::{focal2fov, fov2focal, PerspectiveCamera, PerspectiveProjection};
+use crate::camera::{PerspectiveCamera, PerspectiveProjection, focal2fov, fov2focal};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SceneCamera {

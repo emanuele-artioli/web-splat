@@ -4,13 +4,13 @@ use clap::Parser;
 use image::{ImageBuffer, Rgb};
 use indicatif::{ProgressIterator, ProgressStyle};
 use std::{
-    fs::{create_dir_all, File},
+    fs::{File, create_dir_all},
     path::PathBuf,
     time::Duration,
 };
 use web_splats::{
-    io, smoothstep, Animation, GaussianRenderer, PointCloud, Scene, SceneCamera, SplattingArgs,
-    TrackingShot, WGPUContext,
+    Animation, GaussianRenderer, PointCloud, Scene, SceneCamera, SplattingArgs, TrackingShot,
+    WGPUContext, io, smoothstep,
 };
 
 #[derive(Debug, Parser)]

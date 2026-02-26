@@ -20,8 +20,8 @@ pub struct GaussianCompressed {
     pub geometry_idx: u32,
     pub sh_idx: u32,
 }
-unsafe impl bytemuck::Zeroable for GaussianCompressed{}
-unsafe impl bytemuck::Pod for GaussianCompressed{}
+unsafe impl bytemuck::Zeroable for GaussianCompressed {}
+unsafe impl bytemuck::Pod for GaussianCompressed {}
 
 impl Default for GaussianCompressed {
     fn default() -> Self {
@@ -40,20 +40,20 @@ impl Default for Gaussian {
 pub struct Gaussian {
     pub xyz: Point3<f32>,
     pub opacity: f16,
-    _pad:f16,
+    _pad: f16,
     pub cov: [f16; 6],
 }
 
-unsafe impl bytemuck::Zeroable for Gaussian{}
-unsafe impl bytemuck::Pod for Gaussian{}
+unsafe impl bytemuck::Zeroable for Gaussian {}
+unsafe impl bytemuck::Pod for Gaussian {}
 
-impl Gaussian{
-    pub fn new(xyz:Point3<f32>,opacity:f16,cov:[f16;6])->Self{
-        Self{
-            xyz:xyz,
-            opacity:opacity,
-            cov:cov,
-            _pad:f16::ZERO,
+impl Gaussian {
+    pub fn new(xyz: Point3<f32>, opacity: f16, cov: [f16; 6]) -> Self {
+        Self {
+            xyz: xyz,
+            opacity: opacity,
+            cov: cov,
+            _pad: f16::ZERO,
         }
     }
 }

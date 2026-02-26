@@ -1,12 +1,12 @@
-#[cfg(target_arch = "wasm32")]
-use web_time::Duration;
 use splines::{Interpolate, Key};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
+#[cfg(target_arch = "wasm32")]
+use web_time::Duration;
 
 use cgmath::{EuclideanSpace, InnerSpace, Point3, Quaternion, Rad, VectorSpace};
 
-use crate::{camera::PerspectiveCamera, PerspectiveProjection};
+use crate::{PerspectiveProjection, camera::PerspectiveCamera};
 
 pub trait Lerp {
     fn lerp(&self, other: &Self, amount: f32) -> Self;
@@ -84,11 +84,7 @@ impl Sampler for TrackingShot {
 
 impl Interpolate<f32> for PerspectiveCamera {
     fn step(t: f32, threshold: f32, a: Self, b: Self) -> Self {
-        if t < threshold {
-            a
-        } else {
-            b
-        }
+        if t < threshold { a } else { b }
     }
 
     fn lerp(t: f32, a: Self, b: Self) -> Self {
@@ -154,11 +150,7 @@ impl Interpolate<f32> for PerspectiveCamera {
 
 impl Interpolate<f32> for PerspectiveProjection {
     fn step(t: f32, threshold: f32, a: Self, b: Self) -> Self {
-        if t < threshold {
-            a
-        } else {
-            b
-        }
+        if t < threshold { a } else { b }
     }
 
     fn lerp(t: f32, a: Self, b: Self) -> Self {

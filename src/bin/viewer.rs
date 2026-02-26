@@ -2,7 +2,7 @@ use clap::Parser;
 #[allow(unused_imports)]
 use std::{fmt::Debug, fs::File, path::PathBuf};
 #[allow(unused_imports)]
-use web_splats::{open_window, RenderConfig};
+use web_splats::{RenderConfig, open_window};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]

@@ -10,7 +10,7 @@ use crate::{
 use std::num::NonZeroU64;
 use std::time::Duration;
 
-use wgpu::{include_wgsl, Extent3d, MultisampleState};
+use wgpu::{Extent3d, MultisampleState, include_wgsl};
 
 use cgmath::{EuclideanSpace, Matrix4, Point3, SquareMatrix, Vector2, Vector4};
 
@@ -182,7 +182,7 @@ impl GaussianRenderer {
                     tx.send(num_points).unwrap();
                 },
             );
-            device.poll(wgpu::MaintainBase::Wait).unwrap();
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
             rx.receive().await.unwrap()
         };
         return n;
@@ -570,6 +570,7 @@ impl Display {
                     load: wgpu::LoadOp::Clear(background_color),
                     store: wgpu::StoreOp::Store,
                 },
+                depth_slice: None,
             })],
             ..Default::default()
         });
@@ -583,7 +584,7 @@ impl Display {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug,PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SplattingArgs {
     pub camera: PerspectiveCamera,
     pub viewport: Vector2<u32>,
@@ -612,7 +613,7 @@ pub struct SplattingArgsUniform {
 
     walltime: f32,
     scene_extend: f32,
-    _pad: [u32;2],
+    _pad: [u32; 2],
 
     scene_center: Vector4<f32>,
 }

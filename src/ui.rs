@@ -1,8 +1,8 @@
-#[cfg(target_arch = "wasm32")]
-use web_time::Duration;
 use std::ops::RangeInclusive;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
+#[cfg(target_arch = "wasm32")]
+use web_time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::renderer::DEFAULT_KERNEL_SIZE;
@@ -12,10 +12,9 @@ use cgmath::{Euler, Matrix3, Quaternion};
 use egui::Vec2b;
 
 #[cfg(target_arch = "wasm32")]
-use egui::{Align2,Vec2};
+use egui::{Align2, Vec2};
 
-use egui::{emath::Numeric, Color32, RichText};
-
+use egui::{Color32, RichText, emath::Numeric};
 
 #[cfg(not(target_arch = "wasm32"))]
 use egui_plot::{Legend, PlotPoints};
@@ -80,13 +79,11 @@ pub(crate) fn ui(state: &mut WindowContext) -> bool {
                         .position(egui_plot::Corner::LeftBottom),
                 )
                 .show(ui, |ui| {
-                    let line =
-                        egui_plot::Line::new("preprocess",PlotPoints::from_ys_f32(&pre));
+                    let line = egui_plot::Line::new("preprocess", PlotPoints::from_ys_f32(&pre));
                     ui.line(line);
-                    let line = egui_plot::Line::new("sorting",PlotPoints::from_ys_f32(&sort));
+                    let line = egui_plot::Line::new("sorting", PlotPoints::from_ys_f32(&sort));
                     ui.line(line);
-                    let line =
-                        egui_plot::Line::new("rasterize",PlotPoints::from_ys_f32(&rast));
+                    let line = egui_plot::Line::new("rasterize", PlotPoints::from_ys_f32(&rast));
                     ui.line(line);
                 });
         });
@@ -115,10 +112,10 @@ pub(crate) fn ui(state: &mut WindowContext) -> bool {
                 ui.end_row();
                 ui.add(egui::Label::new("Background Color"));
                 let mut color = egui::Color32::from_rgba_premultiplied(
-                    (state.splatting_args.background_color.r*255.) as u8,
-                    (state.splatting_args.background_color.g*255.) as u8,
-                    (state.splatting_args.background_color.b*255.) as u8,
-                    (state.splatting_args.background_color.a*255.) as u8,
+                    (state.splatting_args.background_color.r * 255.) as u8,
+                    (state.splatting_args.background_color.g * 255.) as u8,
+                    (state.splatting_args.background_color.b * 255.) as u8,
+                    (state.splatting_args.background_color.a * 255.) as u8,
                 );
                 egui::color_picker::color_edit_button_srgba(
                     ui,
@@ -333,7 +330,7 @@ pub(crate) fn ui(state: &mut WindowContext) -> bool {
                 .show(ui, |ui| {
                     ui.strong("Camera Controls");
                     ui.end_row();
-                    
+
                     // Desktop controls
                     ui.label("Rotate Camera");
                     ui.label("Left click + drag / Touch + drag");
@@ -353,7 +350,7 @@ pub(crate) fn ui(state: &mut WindowContext) -> bool {
 
                     ui.separator();
                     ui.end_row();
-                    
+
                     ui.strong("Mobile Touch Controls");
                     ui.end_row();
                     ui.label("Rotate");
@@ -365,7 +362,7 @@ pub(crate) fn ui(state: &mut WindowContext) -> bool {
                     ui.label("Zoom");
                     ui.label("Pinch to zoom");
                     ui.end_row();
-                    
+
                     ui.separator();
                     ui.end_row();
 

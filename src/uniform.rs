@@ -1,7 +1,7 @@
 use std::{mem, num::NonZeroU64};
 
 use bytemuck::{NoUninit, Pod};
-use wgpu::{util::DeviceExt, Device};
+use wgpu::{Device, util::DeviceExt};
 
 #[derive(Debug)]
 pub struct UniformBuffer<T: NoUninit + Pod> {
@@ -85,8 +85,10 @@ where
             label: Some("uniform bind group layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                // do not change to wgpu::ShaderStages::all(), this gives an error in chrome 
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+                // do not change to wgpu::ShaderStages::all(), this gives an error in chrome
+                visibility: wgpu::ShaderStages::VERTEX
+                    | wgpu::ShaderStages::FRAGMENT
+                    | wgpu::ShaderStages::COMPUTE,
                 ty: Self::binding_type(),
                 count: None,
             }],

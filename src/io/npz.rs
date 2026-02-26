@@ -6,10 +6,10 @@ use half::f16;
 use image::EncodableLayout;
 use npyz::npz::{self, NpzArchive};
 
-#[cfg(target_arch = "wasm32")]
-use web_time::Instant;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use crate::{
     pointcloud::{Covariance3D, GaussianCompressed, GaussianQuantization, Quantization},
@@ -123,7 +123,7 @@ impl<'a, R: Read + Seek> PointCloudReader for NpzReader<'a, R> {
         let rotation: Vec<Quaternion<f32>> = try_get_npz_array(&mut self.npz_file, "rotation")?
             .as_slice()
             .iter()
-            .map(|c: &i8| ((*c as f32 - rotation_zero_point) * rotation_scale))
+            .map(|c: &i8| (*c as f32 - rotation_zero_point) * rotation_scale)
             .collect::<Vec<f32>>()
             .chunks_exact(4)
             .map(|c| Quaternion::new(c[0], c[1], c[2], c[3]).normalize())

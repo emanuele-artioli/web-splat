@@ -8,7 +8,7 @@
     All shaders can be found in shaders/radix_sort.wgsl
 */
 
-use wgpu::{util::DeviceExt, ComputePassDescriptor};
+use wgpu::{ComputePassDescriptor, util::DeviceExt};
 
 // IMPORTANT: the following constants have to be synced with the numbers in radix_sort.wgsl
 pub const HISTOGRAM_WG_SIZE: usize = 256;
@@ -67,7 +67,9 @@ impl GPURSSorter {
         if sg_size == 0 || sg_size > 512 {
             let mut cur_sorter: GPURSSorter;
 
-            log::debug!("Searching for the maximum subgroup size (wgpu currently does not allow to query subgroup sizes)");
+            log::warn!(
+                "Searching for the maximum subgroup size (wgpu currently does not allow to query subgroup sizes)"
+            );
             let sizes = vec![1, 8, 16, 32];
             let mut cur_size = 2;
             enum State {
@@ -120,8 +122,8 @@ impl GPURSSorter {
             }
             if biggest_that_worked == 0 {
                 panic!(
-                "GPURSSorter::new() No workgroup size that works was found. Unable to use sorter"
-            );
+                    "GPURSSorter::new() No workgroup size that works was found. Unable to use sorter"
+                );
             }
             cur_sorter = Self::new_with_sg_size(device, biggest_that_worked as u32);
             log::info!(
@@ -130,10 +132,7 @@ impl GPURSSorter {
             );
             return cur_sorter;
         } else {
-            log::info!(
-                "Created a sorter with subgroup size {}\n",
-                sg_size
-            );
+            log::info!("Created a sorter with subgroup size {}\n", sg_size);
             return Self::new_with_sg_size(device, sg_size);
         }
     }
@@ -318,7 +317,10 @@ impl GPURSSorter {
         self.record_sort(&bind_group, n, &mut encoder);
         let idx = queue.submit([encoder.finish()]);
         device
-            .poll(wgpu::PollType::WaitForSubmissionIndex(idx))
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(idx),
+                timeout: None,
+            })
             .unwrap();
 
         let sorted = download_buffer::<f32>(&keyval_a, device, queue).await;
@@ -899,9 +901,14 @@ fn upload_to_buffer<T: bytemuck::Pod>(
         label: Some("Copye endoder"),
     });
     encoder.copy_buffer_to_buffer(&staging_buffer, 0, buffer, 0, staging_buffer.size());
-    queue.submit([encoder.finish()]);
+    let idx = queue.submit([encoder.finish()]);
 
-    let _ = device.poll(wgpu::PollType::Wait).unwrap();
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(idx),
+            timeout: None,
+        })
+        .unwrap();
     staging_buffer.destroy();
 }
 
@@ -921,13 +928,18 @@ async fn download_buffer<T: Clone>(
         label: Some("Copy encoder"),
     });
     encoder.copy_buffer_to_buffer(buffer, 0, &download_buffer, 0, buffer.size());
-    queue.submit([encoder.finish()]);
+    let idx = queue.submit([encoder.finish()]);
 
     // download buffer
     let buffer_slice = download_buffer.slice(..);
     let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
     buffer_slice.map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
-    device.poll(wgpu::PollType::Wait).unwrap();
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(idx),
+            timeout: None,
+        })
+        .unwrap();
     rx.receive().await.unwrap().unwrap();
     let data = buffer_slice.get_mapped_range();
     let r;

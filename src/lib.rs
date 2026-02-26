@@ -4,26 +4,26 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(target_arch = "wasm32")]
-use web_time::{Duration, Instant};
 use renderer::Display;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
+#[cfg(target_arch = "wasm32")]
+use web_time::{Duration, Instant};
 use wgpu::Backends;
 
 use cgmath::{Deg, EuclideanSpace, Point3, Quaternion, UlpsEq, Vector2, Vector3};
 use egui::FullOutput;
 use num_traits::One;
 
-use utils::key_to_num;
 #[cfg(not(target_arch = "wasm32"))]
 use utils::RingBuffer;
+use utils::key_to_num;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
-    event::{DeviceEvent, ElementState, Event, WindowEvent, TouchPhase as WinitTouchPhase},
+    event::{DeviceEvent, ElementState, Event, TouchPhase as WinitTouchPhase, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::Window,
@@ -79,7 +79,7 @@ impl WGPUContext {
         let adapter = wgpu::util::initialize_adapter_from_env_or_default(instance, surface)
             .await
             .unwrap();
-        log::info!("using {}", adapter.get_info().name);
+        log::info!("using apdater \"{}\"", adapter.get_info().name);
 
         #[cfg(target_arch = "wasm32")]
         let required_features = wgpu::Features::default();
@@ -92,28 +92,26 @@ impl WGPUContext {
         let adapter_limits = adapter.limits();
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_features,
-                    #[cfg(not(target_arch = "wasm32"))]
-                    required_limits: wgpu::Limits {
-                        max_storage_buffer_binding_size: adapter_limits
-                            .max_storage_buffer_binding_size,
-                        max_storage_buffers_per_shader_stage: 12,
-                        max_compute_workgroup_storage_size: 1 << 15,
-                        ..adapter_limits
-                    },
-
-                    #[cfg(target_arch = "wasm32")]
-                    required_limits: wgpu::Limits {
-                        max_compute_workgroup_storage_size: 1 << 15,
-                        ..adapter_limits
-                    },
-                    label: None,
-                    memory_hints: wgpu::MemoryHints::Performance,
-                    trace: wgpu::Trace::Off,
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features,
+                #[cfg(not(target_arch = "wasm32"))]
+                required_limits: wgpu::Limits {
+                    max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
+                    max_storage_buffers_per_shader_stage: 12,
+                    max_compute_workgroup_storage_size: 1 << 15,
+                    ..adapter_limits
                 },
-            )
+
+                #[cfg(target_arch = "wasm32")]
+                required_limits: wgpu::Limits {
+                    max_compute_workgroup_storage_size: 1 << 15,
+                    ..adapter_limits
+                },
+                label: None,
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            })
             .await
             .unwrap();
 
@@ -347,7 +345,7 @@ impl WindowContext {
     }
 
     /// returns whether the sceen changed and we need a redraw
-    fn update(&mut self, dt: Duration)  {
+    fn update(&mut self, dt: Duration) {
         // ema fps update
 
         if self.splatting_args.walltime < Duration::from_secs(5) {
@@ -457,6 +455,7 @@ impl WindowContext {
                         load: wgpu::LoadOp::Clear(self.splatting_args.background_color),
                         store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 ..Default::default()
             });
@@ -486,13 +485,13 @@ impl WindowContext {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
                         },
+                        depth_slice: None,
                     })],
                     ..Default::default()
                 })
                 .forget_lifetime();
             self.ui_renderer.render(&mut render_pass, state);
         }
-
 
         if let Some(ui_state) = ui_state {
             self.ui_renderer.cleanup(ui_state)
@@ -528,8 +527,8 @@ impl WindowContext {
     fn start_tracking_shot(&mut self) {
         if self.saved_cameras.len() > 1 {
             let shot = TrackingShot::from_cameras(self.saved_cameras.clone());
-            let a = Animation::new(
-                Duration::from_secs_f32(self.saved_cameras.len() as f32 * 2.),
+            let a: Animation<PerspectiveCamera> = Animation::new(
+                Duration::from_secs_f32(self.saved_cameras.len() as f32 * 4.),
                 true,
                 Box::new(shot),
             );
@@ -645,13 +644,13 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
     // };
     let window_size = LogicalSize::new(800, 600);
     let window_attributes = Window::default_attributes()
-        .with_inner_size( window_size)
+        .with_inner_size(window_size)
         .with_title(format!(
             "{} ({})",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")
         ));
-        
+
     #[allow(deprecated)]
     let window = event_loop.create_window(window_attributes).unwrap();
 
@@ -712,8 +711,7 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
     let mut last = Instant::now();
 
     #[allow(deprecated)]
-    event_loop.run(move |event,target| 
-        
+    event_loop.run(move |event,target|
         match event {
             Event::NewEvents(e) =>  match e{
                 winit::event::StartCause::ResumeTimeReached { .. }=>{
@@ -750,16 +748,15 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
                         }
                     }else if key == KeyCode::KeyU{
                         state.ui_visible = !state.ui_visible;
-                        
                     }else if key == KeyCode::KeyC{
                         state.save_view();
                     } else  if key == KeyCode::KeyR && state.controller.alt_pressed{
                         if let Err(err) = state.reload(){
                             log::error!("failed to reload volume: {:?}", err);
-                        }   
+                        }
                     }else if let Some(scene) = &state.scene{
 
-                        let new_camera = 
+                        let new_camera =
                         if let Some(num) = key_to_num(key){
                             Some(num as usize)
                         }
@@ -808,13 +805,11 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
                     WinitTouchPhase::Ended => controller::TouchPhase::Ended,
                     WinitTouchPhase::Cancelled => controller::TouchPhase::Cancelled,
                 };
-                
                 let controller_touch = controller::Touch {
                     id: touch.id,
                     position: (touch.location.x as f32, touch.location.y as f32),
                     phase: touch_phase,
                 };
-                
                 state.controller.process_touch(controller_touch);
             }
             WindowEvent::RedrawRequested => {
@@ -834,7 +829,7 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
                 let resolution_change = state.splatting_args.viewport != Vector2::new(state.config.width, state.config.height);
 
                 let request_redraw = old_settings != state.splatting_args || resolution_change;
-    
+
                 if request_redraw || redraw_ui{
                     state.fps = (1. / dt.as_secs_f32()) * 0.05 + state.fps * 0.95;
                     match state.render(request_redraw,state.ui_visible.then_some(shapes)) {

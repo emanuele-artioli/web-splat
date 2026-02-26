@@ -125,7 +125,7 @@ impl<R: io::Read + io::Seek> PlyReader<R> {
             .comments
             .iter()
             .find(|c| c.contains("mip"))
-            .map(|c| c.split('=').last().unwrap().parse::<bool>())
+            .map(|c| c.split('=').last().unwrap().to_lowercase().parse::<bool>())
             .transpose()?)
     }
     fn kernel_size(header: &ply::Header) -> Result<Option<f32>, anyhow::Error> {
