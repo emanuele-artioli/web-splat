@@ -1,7 +1,7 @@
 use std::{
     io::{Read, Seek},
     path::PathBuf,
-    sync::Arc,
+    sync::Arc, //thread,
 };
 
 use renderer::Display;
@@ -45,7 +45,7 @@ mod renderer;
 pub use renderer::{GaussianRenderer, SplattingArgs};
 
 mod scene;
-use crate::utils::GPUStopwatch;
+use crate::{io::ply::PlyReader, utils::GPUStopwatch};
 
 pub use self::scene::{Scene, SceneCamera, Split};
 
@@ -130,7 +130,7 @@ pub struct WindowContext {
     window: Arc<Window>,
     scale_factor: f32,
 
-    pc: PointCloud,
+    pc: Arc<PointCloud>,
     pointcloud_file_path: Option<PathBuf>,
     renderer: GaussianRenderer,
     animation: Option<(Animation<PerspectiveCamera>, bool)>,
@@ -156,7 +156,7 @@ pub struct WindowContext {
 
 impl WindowContext {
     // Creating some of the wgpu types requires async code
-    async fn new<R: Read + Seek>(
+    async fn new<R: Read + Seek+ Send+ 'static>(
         window: Window,
         pc_file: R,
         render_config: &RenderConfig,
@@ -165,6 +165,8 @@ impl WindowContext {
         if size == PhysicalSize::new(0, 0) {
             size = PhysicalSize::new(800, 600);
         }
+
+        log::info!("window size: {}x{}", size.width, size.height);
 
         let window = Arc::new(window);
 
@@ -209,9 +211,25 @@ impl WindowContext {
         };
         surface.configure(&device, &config);
 
-        let pc_raw = io::GenericGaussianPointCloud::load(pc_file)?;
-        let pc = PointCloud::new(&device, pc_raw)?;
-        log::info!("loaded point cloud with {:} points", pc.num_points());
+        // let metadata = io::GenericGaussianPointCloud::metadata(pc_file)?;
+        let mut ply_reader = PlyReader::new(pc_file)?;
+        let metadata = ply_reader.metadata();
+        let pc = Arc::new(PointCloud::new(&device, metadata)?);
+
+       
+        let load_queue = queue.clone();
+        let load_pc = pc.clone();
+        // thread::spawn(move ||{
+        //     loop{
+        //         let chunk_size = 4096;
+        //         let (gaussians,sh_coefs,bbox) =  ply_reader.load_chunk(chunk_size).unwrap();
+        //         if gaussians.is_empty(){
+        //             break;
+        //         }
+        //         load_pc.upload_chunk(&gaussians,&sh_coefs, &load_queue,&bbox);
+        //     }
+        //     log::info!("finished loading point cloud");
+        // });
 
         let renderer =
             GaussianRenderer::new(&device, &queue, render_format, pc.sh_deg(), pc.compressed())
@@ -232,7 +250,6 @@ impl WindowContext {
 
         let mut controller = CameraController::new(0.1, 0.05);
         controller.center = pc.center();
-        // controller.up = pc.up;
         let ui_renderer = ui_renderer::EguiWGPU::new(device, surface_format, &window);
 
         let display = Display::new(
@@ -248,6 +265,9 @@ impl WindowContext {
         } else {
             None
         };
+
+        // show window after setup
+        window.set_visible(true);
 
         Ok(Self {
             wgpu_context,
@@ -291,23 +311,23 @@ impl WindowContext {
         })
     }
 
-    fn reload(&mut self) -> anyhow::Result<()> {
-        if let Some(file_path) = &self.pointcloud_file_path {
-            log::info!("reloading volume from {:?}", file_path);
-            let file = std::fs::File::open(file_path)?;
-            let pc_raw = io::GenericGaussianPointCloud::load(file)?;
-            self.pc = PointCloud::new(&self.wgpu_context.device, pc_raw)?;
-        } else {
-            return Err(anyhow::anyhow!("no pointcloud file path present"));
-        }
-        if let Some(scene_path) = &self.scene_file_path {
-            log::info!("reloading scene from {:?}", scene_path);
-            let file = std::fs::File::open(scene_path)?;
+    // fn reload(&mut self) -> anyhow::Result<()> {
+    //     if let Some(file_path) = &self.pointcloud_file_path {
+    //         log::info!("reloading volume from {:?}", file_path);
+    //         let file = std::fs::File::open(file_path)?;
+    //         let pc_raw = io::GenericGaussianPointCloud::load(file)?;
+    //         self.pc = PointCloud::new(&self.wgpu_context.device, pc_raw)?;
+    //     } else {
+    //         return Err(anyhow::anyhow!("no pointcloud file path present"));
+    //     }
+    //     if let Some(scene_path) = &self.scene_file_path {
+    //         log::info!("reloading scene from {:?}", scene_path);
+    //         let file = std::fs::File::open(scene_path)?;
 
-            self.set_scene(Scene::from_json(file)?);
-        }
-        Ok(())
-    }
+    //         self.set_scene(Scene::from_json(file)?);
+    //     }
+    //     Ok(())
+    // }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>, scale_factor: Option<f32>) {
         if new_size.width > 0 && new_size.height > 0 {
@@ -392,7 +412,7 @@ impl WindowContext {
         }
 
         let aabb = self.pc.bbox();
-        self.splatting_args.camera.fit_near_far(aabb);
+        self.splatting_args.camera.fit_near_far(&aabb);
     }
 
     fn render(
@@ -624,24 +644,6 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
     env_logger::init();
     let event_loop = EventLoop::new().unwrap();
 
-    let scene = scene_file.and_then(|f| match Scene::from_json(f) {
-        Ok(s) => Some(s),
-        Err(err) => {
-            log::error!("cannot load scene: {:?}", err);
-            None
-        }
-    });
-
-    // let window_size = if let Some(scene) = &scene {
-    //     let camera = scene.camera(0).unwrap();
-    //     let factor = 1200. / camera.width as f32;
-    //     LogicalSize::new(
-    //         (camera.width as f32 * factor) as u32,
-    //         (camera.height as f32 * factor) as u32,
-    //     )
-    // } else {
-    //     LogicalSize::new(800, 600)
-    // };
     let window_size = LogicalSize::new(800, 600);
     let window_attributes = Window::default_attributes()
         .with_inner_size(window_size)
@@ -649,10 +651,18 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
             "{} ({})",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")
-        ));
+        )).with_visible(false);
 
     #[allow(deprecated)]
     let window = event_loop.create_window(window_attributes).unwrap();
+
+    let scene = scene_file.and_then(|f| match Scene::from_json(f) {
+        Ok(s) => Some(s),
+        Err(err) => {
+            log::error!("cannot load scene: {:?}", err);
+            None
+        }
+    });
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -690,6 +700,7 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
 
     let mut state = WindowContext::new(window, file, &config).await.unwrap();
     state.pointcloud_file_path = pointcloud_file_path;
+
 
     if let Some(scene) = scene {
         state.set_scene(scene);
@@ -750,10 +761,10 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
                         state.ui_visible = !state.ui_visible;
                     }else if key == KeyCode::KeyC{
                         state.save_view();
-                    } else  if key == KeyCode::KeyR && state.controller.alt_pressed{
-                        if let Err(err) = state.reload(){
-                            log::error!("failed to reload volume: {:?}", err);
-                        }
+                    // } else  if key == KeyCode::KeyR && state.controller.alt_pressed{
+                    //     if let Err(err) = state.reload(){
+                    //         log::error!("failed to reload volume: {:?}", err);
+                    //     }
                     }else if let Some(scene) = &state.scene{
 
                         let new_camera =

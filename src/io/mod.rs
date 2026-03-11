@@ -6,7 +6,7 @@ use bytemuck::Zeroable;
 use cgmath::{Array, EuclideanSpace, InnerSpace, Point3, Vector3};
 use half::f16;
 
-use crate::pointcloud::{Aabb, Covariance3D, Gaussian, GaussianCompressed, GaussianQuantization};
+use crate::pointcloud::{Aabb, Covariance3D, Gaussian, GaussianCompressed, GaussianQuantization, PointCloudMetadata};
 
 #[cfg(feature = "npz")]
 use self::npz::NpzReader;
@@ -42,23 +42,42 @@ pub struct GenericGaussianPointCloud {
 }
 
 impl GenericGaussianPointCloud {
-    pub fn load<'a, R: Read + Seek>(f: R) -> Result<Self, anyhow::Error> {
-        let mut signature: [u8; 4] = [0; 4];
-        let mut f = f;
-        f.read_exact(&mut signature)?;
-        f.rewind()?;
-        if signature.starts_with(PlyReader::<R>::magic_bytes()) {
-            let mut ply_reader = PlyReader::new(f)?;
-            return ply_reader.read();
-        }
-        #[cfg(feature = "npz")]
-        if signature.starts_with(NpzReader::<R>::magic_bytes()) {
-            let mut reader = BufReader::new(f);
-            let mut npz_reader = NpzReader::new(&mut reader)?;
-            return npz_reader.read();
-        }
-        return Err(anyhow::anyhow!("Unknown file format"));
-    }
+
+    // pub fn  metadata<'a, R: Read + Seek>(f: R) -> Result<PointCloudMetadata, anyhow::Error> {
+    //     let mut signature: [u8; 4] = [0; 4];
+    //     let mut f = f;
+    //     f.read_exact(&mut signature)?;
+    //     f.rewind()?;
+    //     if signature.starts_with(PlyReader::<R>::magic_bytes()) {
+    //         let mut ply_reader = PlyReader::new(f)?;
+    //         return Ok(ply_reader.metadata());
+    //     }
+    //     // #[cfg(feature = "npz")]
+    //     // if signature.starts_with(NpzReader::<R>::magic_bytes()) {
+    //     //     let mut reader = BufReader::new(f);
+    //     //     let mut npz_reader = NpzReader::new(&mut reader)?;
+    //     //     return npz_reader.read();
+    //     // }
+    //     return Err(anyhow::anyhow!("Unknown file format"));
+    // }
+
+    // pub fn load<'a, R: Read + Seek>(f: R) -> Result<Self, anyhow::Error> {
+    //     let mut signature: [u8; 4] = [0; 4];
+    //     let mut f = f;
+    //     f.read_exact(&mut signature)?;
+    //     f.rewind()?;
+    //     if signature.starts_with(PlyReader::<R>::magic_bytes()) {
+    //         let mut ply_reader = PlyReader::new(f)?;
+    //         return ply_reader.read();
+    //     }
+    //     #[cfg(feature = "npz")]
+    //     if signature.starts_with(NpzReader::<R>::magic_bytes()) {
+    //         let mut reader = BufReader::new(f);
+    //         let mut npz_reader = NpzReader::new(&mut reader)?;
+    //         return npz_reader.read();
+    //     }
+    //     return Err(anyhow::anyhow!("Unknown file format"));
+    // }
 
     fn new(
         gaussians: Vec<Gaussian>,

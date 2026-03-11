@@ -5,11 +5,10 @@ use cgmath::{
 use half::f16;
 use num_traits::Float;
 use std::fmt::Debug;
-use std::mem;
-use wgpu::util::DeviceExt;
+use std::sync::Arc;
+use egui::mutex::Mutex;
 
-use crate::io::GenericGaussianPointCloud;
-use crate::uniform::UniformBuffer;
+use std::{mem, thread};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -68,20 +67,37 @@ impl Default for Covariance3D {
     }
 }
 
+pub struct PointCloudMetadata {
+    pub num_points: usize,
+    pub sh_deg: u32,
+    pub center: Point3<f32>,
+    pub up: Option<Vector3<f32>>,
+    pub mip_splatting: Option<bool>,
+    pub kernel_size: Option<f32>,
+    pub background_color: Option<[f32; 3]>,
+    pub compressed: bool,
+}
+
+struct DynamicPointCloudAttributes {
+    valid_points: u32,
+    bbox: Aabb<f32>,
+    center: Point3<f32>,
+    up: Option<Vector3<f32>>,
+}
+
 #[allow(dead_code)]
 pub struct PointCloud {
     splat_2d_buffer: wgpu::Buffer,
+    gaussian_buffer: wgpu::Buffer,
+    sh_coef_buffer: wgpu::Buffer,
 
     bind_group: wgpu::BindGroup,
     render_bind_group: wgpu::BindGroup,
-    num_points: u32,
+    total_num_points: u32,
     sh_deg: u32,
-    bbox: Aabb<f32>,
     compressed: bool,
 
-    center: Point3<f32>,
-    up: Option<Vector3<f32>>,
-
+    dynamic_attributes: Arc<Mutex<DynamicPointCloudAttributes>>,
     mip_splatting: Option<bool>,
     kernel_size: Option<f32>,
     background_color: Option<wgpu::Color>,
@@ -90,19 +106,16 @@ pub struct PointCloud {
 impl Debug for PointCloud {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PointCloud")
-            .field("num_points", &self.num_points)
+            .field("num_points", &self.total_num_points)
             .finish()
     }
 }
 
 impl PointCloud {
-    pub fn new(
-        device: &wgpu::Device,
-        pc: GenericGaussianPointCloud,
-    ) -> Result<Self, anyhow::Error> {
+    pub fn new(device: &wgpu::Device, metadata: PointCloudMetadata) -> Result<Self, anyhow::Error> {
         let splat_2d_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("2d gaussians buffer"),
-            size: (pc.num_points * mem::size_of::<Splat>()) as u64,
+            size: (metadata.num_points * mem::size_of::<Splat>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -116,19 +129,24 @@ impl PointCloud {
             }],
         });
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let gaussian_buffer_size = (metadata.num_points * mem::size_of::<Gaussian>()) as u64;
+
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("3d gaussians buffer"),
-            contents: pc.gaussian_buffer(),
+            size: gaussian_buffer_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
-        let sh_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let sh_coef_buffer_size = (metadata.num_points * mem::size_of::<[[f16; 3]; 16]>()) as u64;
+        let sh_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sh coefs buffer"),
-            contents: pc.sh_coefs_buffer(),
+            size: sh_coef_buffer_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
-        let mut bind_group_entries = vec![
+        let bind_group_entries = vec![
             wgpu::BindGroupEntry {
                 binding: 0,
                 resource: vertex_buffer.as_entire_binding(),
@@ -143,53 +161,63 @@ impl PointCloud {
             },
         ];
 
-        let bind_group = if pc.compressed() {
-            let covars_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Covariances buffer"),
-                contents: bytemuck::cast_slice(pc.covars.as_ref().unwrap().as_slice()),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
-            let quantization_uniform = UniformBuffer::new(
-                device,
-                pc.quantization.unwrap(),
-                Some("quantization uniform buffer"),
-            );
-            bind_group_entries.push(wgpu::BindGroupEntry {
-                binding: 3,
-                resource: covars_buffer.as_entire_binding(),
-            });
-            bind_group_entries.push(wgpu::BindGroupEntry {
-                binding: 4,
-                resource: quantization_uniform.buffer().as_entire_binding(),
-            });
+        // let bind_group = if pc.compressed() {
+        //     let covars_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        //         label: Some("Covariances buffer"),
+        //         contents: bytemuck::cast_slice(pc.covars.as_ref().unwrap().as_slice()),
+        //         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        //     });
+        //     let quantization_uniform = UniformBuffer::new(
+        //         device,
+        //         pc.quantization.unwrap(),
+        //         Some("quantization uniform buffer"),
+        //     );
+        //     bind_group_entries.push(wgpu::BindGroupEntry {
+        //         binding: 3,
+        //         resource: covars_buffer.as_entire_binding(),
+        //     });
+        //     bind_group_entries.push(wgpu::BindGroupEntry {
+        //         binding: 4,
+        //         resource: quantization_uniform.buffer().as_entire_binding(),
+        //     });
 
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("point cloud bind group (compressed)"),
-                layout: &Self::bind_group_layout_compressed(device),
-                entries: &bind_group_entries,
-            })
-        } else {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("point cloud bind group"),
-                layout: &Self::bind_group_layout(device),
-                entries: &bind_group_entries,
-            })
-        };
+        //     device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //         label: Some("point cloud bind group (compressed)"),
+        //         layout: &Self::bind_group_layout_compressed(device),
+        //         entries: &bind_group_entries,
+        //     })
+        // } else {
+        //     device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //         label: Some("point cloud bind group"),
+        //         layout: &Self::bind_group_layout(device),
+        //         entries: &bind_group_entries,
+        //     })
+        // };
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("point cloud bind group"),
+            layout: &Self::bind_group_layout(device),
+            entries: &bind_group_entries,
+        });
 
         Ok(Self {
             splat_2d_buffer,
-
+            gaussian_buffer: vertex_buffer,
+            sh_coef_buffer: sh_buffer,
             bind_group,
             render_bind_group,
-            num_points: pc.num_points as u32,
-            sh_deg: pc.sh_deg,
-            compressed: pc.compressed(),
-            bbox: pc.aabb.into(),
-            center: pc.center,
-            up: pc.up,
-            mip_splatting: pc.mip_splatting,
-            kernel_size: pc.kernel_size,
-            background_color: pc.background_color.map(|c| wgpu::Color {
+            total_num_points: metadata.num_points as u32,
+            sh_deg: metadata.sh_deg,
+            compressed: metadata.compressed,
+            dynamic_attributes: Arc::new(Mutex::new(DynamicPointCloudAttributes {
+                valid_points: 0,
+                bbox: Aabb::unit(),
+                center: metadata.center,
+                up: metadata.up,
+            })),
+            mip_splatting: metadata.mip_splatting,
+            kernel_size: metadata.kernel_size,
+            background_color: metadata.background_color.map(|c| wgpu::Color {
                 r: c[0] as f64,
                 g: c[1] as f64,
                 b: c[2] as f64,
@@ -202,16 +230,20 @@ impl PointCloud {
         self.compressed
     }
 
-    pub fn num_points(&self) -> u32 {
-        self.num_points
+    pub fn total_num_points(&self) -> u32 {
+        self.total_num_points
+    }
+
+    pub fn valid_num_points(&self) -> u32 {
+        self.dynamic_attributes.lock().valid_points
     }
 
     pub fn sh_deg(&self) -> u32 {
         self.sh_deg
     }
 
-    pub fn bbox(&self) -> &Aabb<f32> {
-        &self.bbox
+    pub fn bbox(&self) -> Aabb<f32> {
+        self.dynamic_attributes.lock().bbox
     }
 
     pub(crate) fn bind_group(&self) -> &wgpu::BindGroup {
@@ -336,16 +368,48 @@ impl PointCloud {
     pub fn mip_splatting(&self) -> Option<bool> {
         self.mip_splatting
     }
+
     pub fn dilation_kernel_size(&self) -> Option<f32> {
         self.kernel_size
     }
 
     pub fn center(&self) -> Point3<f32> {
-        self.center
+        self.dynamic_attributes.lock().center
     }
 
     pub fn up(&self) -> Option<Vector3<f32>> {
-        self.up
+        self.dynamic_attributes.lock().up
+    }
+
+    pub fn upload_chunk(
+        &self,
+        gaussians: &[Gaussian],
+        sh_coefs: &[[[f16; 3]; 16]],
+        queue: &wgpu::Queue,
+        bbox: &Aabb<f32>,
+    ) {
+        assert_eq!(
+            gaussians.len(),
+            sh_coefs.len(),
+            "Number of gaussians and sh coefficients must match"
+        );
+        let new_points = gaussians.len() as u32;
+        let offset = self.valid_num_points() as u64;
+        queue.write_buffer(
+            &self.gaussian_buffer,
+            offset * std::mem::size_of::<Gaussian>() as u64,
+            bytemuck::cast_slice(gaussians),
+        );
+        queue.write_buffer(
+            &self.sh_coef_buffer,
+            offset * std::mem::size_of::<[[f16; 3]; 16]>() as u64,
+            bytemuck::cast_slice(sh_coefs),
+        );
+        {
+            let mut attributes = self.dynamic_attributes.lock();
+            attributes.bbox.grow_union(bbox);
+            attributes.valid_points += new_points;
+        }
     }
 }
 

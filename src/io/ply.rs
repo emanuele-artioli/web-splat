@@ -5,14 +5,12 @@ use ply_rs::ply;
 use std::io::{self, BufReader, Read, Seek};
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian, ReadBytesExt};
-use cgmath::{InnerSpace, Point3, Quaternion, Vector3};
+use cgmath::{EuclideanSpace, InnerSpace, Point3, Quaternion, Vector3};
 
 use crate::{
-    pointcloud::Gaussian,
+    pointcloud::{Aabb, Gaussian, PointCloudMetadata},
     utils::{build_cov, sh_deg_from_num_coefs, sigmoid},
 };
-
-use super::{GenericGaussianPointCloud, PointCloudReader};
 
 pub struct PlyReader<R: Read + Seek> {
     header: ply_rs::ply::Header,
@@ -22,6 +20,7 @@ pub struct PlyReader<R: Read + Seek> {
     mip_splatting: Option<bool>,
     kernel_size: Option<f32>,
     background_color: Option<[f32; 3]>,
+    read_points: usize,
 }
 
 impl<R: io::Read + io::Seek> PlyReader<R> {
@@ -44,7 +43,21 @@ impl<R: io::Read + io::Seek> PlyReader<R> {
             mip_splatting,
             kernel_size,
             background_color,
+            read_points: 0,
         })
+    }
+
+    pub fn metadata(&self) -> PointCloudMetadata {
+        PointCloudMetadata {
+            num_points: self.num_points,
+            sh_deg: self.sh_deg,
+            center: Point3::origin(),
+            up: None,
+            mip_splatting: self.mip_splatting,
+            kernel_size: self.kernel_size,
+            background_color: self.background_color,
+            compressed: false,
+        }
     }
 
     fn read_line<B: ByteOrder>(
@@ -88,6 +101,8 @@ impl<R: io::Read + io::Seek> PlyReader<R> {
         let rot = Quaternion::new(rot_0, rot_1, rot_2, rot_3).normalize();
 
         let cov = build_cov(rot, scale);
+
+        self.read_points += 1;
 
         return Ok((
             Gaussian::new(
@@ -159,40 +174,34 @@ impl<R: io::Read + io::Seek> PlyReader<R> {
             })
             .transpose()
     }
-}
 
-impl<R: io::Read + io::Seek> PointCloudReader for PlyReader<R> {
-    fn read(&mut self) -> Result<GenericGaussianPointCloud, anyhow::Error> {
-        let mut gaussians = Vec::with_capacity(self.num_points);
-        let mut sh_coefs = Vec::with_capacity(self.num_points);
+    pub fn load_chunk(&mut self,size: usize) -> Result<(
+        Vec<Gaussian>,Vec<[[f16;3];16]>,Aabb<f32>
+    ), anyhow::Error>{
+        let remaining_points =( self.num_points - self.read_points).min(size);
+        let mut gaussians = Vec::with_capacity(remaining_points);
+        let mut sh_coefs = Vec::with_capacity(remaining_points);
+        let mut bbox = Aabb::new(Point3::new(f32::MAX, f32::MAX, f32::MAX), Point3::new(f32::MIN, f32::MIN, f32::MIN));
         match self.header.encoding {
             ply_rs::ply::Encoding::Ascii => todo!("acsii ply format not supported"),
             ply_rs::ply::Encoding::BinaryBigEndian => {
-                for _ in 0..self.num_points {
+                for _ in 0..remaining_points {
                     let (g, s) = self.read_line::<BigEndian>(self.sh_deg as usize)?;
                     gaussians.push(g);
                     sh_coefs.push(s);
+                    bbox.grow(&g.xyz);
                 }
             }
             ply_rs::ply::Encoding::BinaryLittleEndian => {
-                for _ in 0..self.num_points {
+                for _ in 0..remaining_points {
                     let (g, s) = self.read_line::<LittleEndian>(self.sh_deg as usize)?;
                     gaussians.push(g);
                     sh_coefs.push(s);
+                    bbox.grow(&g.xyz);
                 }
             }
         };
-        return Ok(GenericGaussianPointCloud::new(
-            gaussians,
-            sh_coefs,
-            self.sh_deg,
-            self.num_points,
-            self.kernel_size,
-            self.mip_splatting,
-            self.background_color,
-            None,
-            None,
-        ));
+        return Ok((gaussians,sh_coefs,bbox));
     }
 
     fn magic_bytes() -> &'static [u8] {

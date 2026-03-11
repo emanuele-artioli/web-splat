@@ -54,7 +54,7 @@ pub(crate) fn ui(state: &mut WindowContext) -> bool {
                 ui.label(format!(
                     "{:} ({:.2}%)",
                     format_thousands(num_drawn),
-                    (num_drawn as f32 / state.pc.num_points() as f32) * 100.
+                    (num_drawn as f32 / state.pc.valid_num_points().max(0) as f32) * 100.
                 ));
             });
             let history = state.history.to_vec();
@@ -170,7 +170,7 @@ pub(crate) fn ui(state: &mut WindowContext) -> bool {
                 .striped(false)
                 .show(ui, |ui| {
                     ui.strong("Gaussians:");
-                    ui.label(format_thousands(state.pc.num_points()));
+                    ui.label(format_thousands(state.pc.total_num_points()));
                     ui.end_row();
                     ui.strong("SH Degree:");
                     ui.label(state.pc.sh_deg().to_string());

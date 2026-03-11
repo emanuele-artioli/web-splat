@@ -201,12 +201,12 @@ impl GaussianRenderer {
             || self
                 .sorter_suff
                 .as_ref()
-                .is_some_and(|s| s.num_points != pc.num_points() as usize)
+                .is_some_and(|s| s.num_points != pc.total_num_points() as usize)
         {
-            log::debug!("created sort buffers for {:} points", pc.num_points());
+            log::debug!("created sort buffers for {:} points", pc.total_num_points());
             self.sorter_suff = Some(
                 self.sorter
-                    .create_sort_stuff(device, pc.num_points() as usize),
+                    .create_sort_stuff(device, pc.total_num_points() as usize),
             );
         }
 
@@ -399,6 +399,10 @@ impl PreprocessPipeline {
         render_settings: &UniformBuffer<SplattingArgsUniform>,
         sort_bg: &wgpu::BindGroup,
     ) {
+        let valid_points = pc.valid_num_points();
+        if valid_points == 0 {
+            return;
+        }
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("preprocess compute pass"),
             ..Default::default()
@@ -409,7 +413,7 @@ impl PreprocessPipeline {
         pass.set_bind_group(2, sort_bg, &[]);
         pass.set_bind_group(3, render_settings.bind_group(), &[]);
 
-        let wgs_x = (pc.num_points() as f32 / 256.0).ceil() as u32;
+        let wgs_x = (valid_points as f32 / 256.0).ceil() as u32;
         pass.dispatch_workgroups(wgs_x, 1, 1);
     }
 }
