@@ -56,6 +56,9 @@ name = "viewer"
 name = "video"
 required-features = ["video"]
 
+[[bin]]
+name = "stream_render"
+
 [features]
 npz = ["dep:npyz"]
 video = []

@@ -47,6 +47,53 @@ cargo run --release --features npz --bin viewer point_cloud.npz cameras.json
       -V, --version   Print version
 </details>
 
+## Python 6DoF Generator Wrapper
+
+`websplat_generator.py` provides a fast Python API that keeps web-splat loaded in memory and renders many camera poses without reloading the model.
+
+The wrapper starts a persistent Rust process (`stream_render`) and exchanges raw RGBA frames.
+
+Install Python dependency:
+
+```bash
+pip install -r requirements.txt
+```
+
+### Quick Example
+
+```python
+from websplat_generator import WebSplatGenerator
+
+poses = [
+  (0.0, 0.0, -2.0, 0.0, 0.0, 0.0),
+  (0.1, 0.0, -2.0, 0.0, 5.0, 2.0),
+]
+
+with WebSplatGenerator(
+  point_cloud_path="point_cloud.ply",
+  scene_path="cameras.json",  # used to infer width/height/fx/fy
+) as renderer:
+  for frame in renderer.render_many(poses):
+    # frame is numpy uint8 array with shape (H, W, 4)
+    pass
+```
+
+### Pose Convention
+
+`WebSplatGenerator.render_pose(...)` accepts either:
+
+- 6 values (Euler):
+
+`(x, y, z, roll_deg, pitch_deg, yaw_deg)`
+
+`roll_deg`, `pitch_deg`, and `yaw_deg` are interpreted in degrees.
+
+- 12 values (matrix):
+
+`(x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22)`
+
+where `r..` entries are a row-major `3x3` rotation matrix (for example directly from `cameras.json`).
+
 ## About
 
 **Splat Sorting**
