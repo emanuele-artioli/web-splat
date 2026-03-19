@@ -173,12 +173,13 @@
             throw Error("WebGPU not supported.");
         }
 
-        import init, { run_wasm } from "./web_splats.js";
+        import init, { run_wasm, set_camera_pose_wasm, set_max_sh_deg_wasm } from "./web_splats.js";
         let init_promise = init();
 
         let params = new URLSearchParams(window.location.search);
         let scene_file = params.get("scene");
         let pc_file = params.get("file");
+        const maxShDegParam = Number.parseInt(params.get("maxShDeg") || "0", 10);
 
 
         function withProgress(response) {
@@ -231,6 +232,31 @@
 
                 let [pc_data, scene_data] = await Promise.all([pc_promise, scene_promise]);
                 await init_promise;
+                if (!Number.isNaN(maxShDegParam)) {
+                    set_max_sh_deg_wasm(Math.max(0, maxShDegParam | 0));
+                }
+
+                // Parent pages in the same origin can drive the camera pose through this hook.
+                window.setWebSplatCameraPose = function (pose) {
+                    if (!pose) return;
+                    set_camera_pose_wasm(
+                        Number(pose.px || 0),
+                        Number(pose.py || 0),
+                        Number(pose.pz || 0),
+                        Number(pose.qx || 0),
+                        Number(pose.qy || 0),
+                        Number(pose.qz || 0),
+                        Number(pose.qw || 1),
+                        Number(pose.fovxRad || 0.78539816339),
+                        Number(pose.fovyRad || 0.78539816339)
+                    );
+                };
+
+                window.setWebSplatMaxShDeg = function (value) {
+                    set_max_sh_deg_wasm(Math.max(0, Number(value) | 0));
+                };
+
+                window.webSplatReady = true;
                 run_wasm(pc_data, scene_data, pc_file, scene_file);
             } catch (e) {
                 document.getElementById("spinner").style.display = "none";

@@ -19,6 +19,10 @@ struct Opt {
     /// Support HDR rendering
     #[arg(long, default_value_t = false)]
     hdr: bool,
+
+    /// maximum allowed Spherical Harmonics (SH) degree
+    #[arg(long, default_value_t = 3)]
+    max_sh_deg: u32,
 }
 
 /// check if there is a scene file in the same directory or parent directory as the input file
@@ -60,6 +64,7 @@ async fn main() {
         RenderConfig {
             no_vsync: opt.no_vsync,
             hdr: opt.hdr,
+            max_sh_deg: opt.max_sh_deg,
         },
         Some(opt.input),
         opt.scene,

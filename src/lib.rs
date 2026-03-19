@@ -3,6 +3,8 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+#[cfg(target_arch = "wasm32")]
+use std::cell::RefCell;
 
 use renderer::Display;
 #[cfg(not(target_arch = "wasm32"))]
@@ -12,6 +14,8 @@ use web_time::{Duration, Instant};
 use wgpu::Backends;
 
 use cgmath::{Deg, EuclideanSpace, Point3, Quaternion, UlpsEq, Vector2, Vector3};
+#[cfg(target_arch = "wasm32")]
+use cgmath::Rad;
 use egui::FullOutput;
 use num_traits::One;
 
@@ -57,6 +61,27 @@ mod utils;
 pub struct RenderConfig {
     pub no_vsync: bool,
     pub hdr: bool,
+    pub max_sh_deg: u32,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy)]
+struct WasmCameraPose {
+    px: f32,
+    py: f32,
+    pz: f32,
+    qx: f32,
+    qy: f32,
+    qz: f32,
+    qw: f32,
+    fovx_rad: f32,
+    fovy_rad: f32,
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static WASM_PENDING_CAMERA_POSE: RefCell<Option<WasmCameraPose>> = RefCell::new(None);
+    static WASM_MAX_SH_DEG_OVERRIDE: RefCell<u32> = RefCell::new(0);
 }
 
 pub struct WGPUContext {
@@ -249,6 +274,8 @@ impl WindowContext {
             None
         };
 
+        let max_sh = render_config.max_sh_deg.min(pc.sh_deg());
+
         Ok(Self {
             wgpu_context,
             scale_factor: window.scale_factor() as f32,
@@ -260,7 +287,7 @@ impl WindowContext {
                 camera: view_camera,
                 viewport: Vector2::new(size.width, size.height),
                 gaussian_scaling: 1.,
-                max_sh_deg: pc.sh_deg(),
+                max_sh_deg: max_sh,
                 mip_splatting: None,
                 kernel_size: None,
                 clipping_box: None,
@@ -591,6 +618,23 @@ impl WindowContext {
             .resize(self.config.width, self.config.height);
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn apply_wasm_camera_pose(&mut self, pose: WasmCameraPose) {
+        let viewport = Vector2::new(self.config.width, self.config.height);
+        let mut camera = PerspectiveCamera::new(
+            Point3::new(pose.px, pose.py, pose.pz),
+            Quaternion::new(pose.qw, pose.qx, pose.qy, pose.qz),
+            PerspectiveProjection::new(
+                viewport,
+                Vector2::new(Rad(pose.fovx_rad), Rad(pose.fovy_rad)),
+                0.01,
+                1000.0,
+            ),
+        );
+        camera.fit_near_far(self.pc.bbox());
+        self.set_camera(camera, Duration::ZERO);
+    }
+
     fn save_view(&mut self) {
         let max_scene_id = if let Some(scene) = &self.scene {
             scene.cameras(None).iter().map(|c| c.id).max().unwrap_or(0)
@@ -821,6 +865,14 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
                 let dt = now-last;
                 last = now;
 
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let pending_pose = WASM_PENDING_CAMERA_POSE.with(|slot| slot.borrow_mut().take());
+                    if let Some(pose) = pending_pose {
+                        state.apply_wasm_camera_pose(pose);
+                    }
+                }
+
                 let old_settings = state.splatting_args.clone();
                 state.update(dt);
 
@@ -860,6 +912,42 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
+pub fn set_max_sh_deg_wasm(max_sh_deg: u32) {
+    WASM_MAX_SH_DEG_OVERRIDE.with(|slot| {
+        *slot.borrow_mut() = max_sh_deg;
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn set_camera_pose_wasm(
+    px: f32,
+    py: f32,
+    pz: f32,
+    qx: f32,
+    qy: f32,
+    qz: f32,
+    qw: f32,
+    fovx_rad: f32,
+    fovy_rad: f32,
+) {
+    WASM_PENDING_CAMERA_POSE.with(|slot| {
+        *slot.borrow_mut() = Some(WasmCameraPose {
+            px,
+            py,
+            pz,
+            qx,
+            qy,
+            qz,
+            qw,
+            fovx_rad,
+            fovy_rad,
+        });
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
 pub async fn run_wasm(
     pc: Vec<u8>,
     scene: Option<Vec<u8>>,
@@ -872,6 +960,7 @@ pub async fn run_wasm(
     console_log::init().expect("could not initialize logger");
     let pc_reader = Cursor::new(pc);
     let scene_reader = scene.map(|d: Vec<u8>| Cursor::new(d));
+    let max_sh_deg = WASM_MAX_SH_DEG_OVERRIDE.with(|slot| *slot.borrow());
 
     wasm_bindgen_futures::spawn_local(open_window(
         pc_reader,
@@ -879,6 +968,7 @@ pub async fn run_wasm(
         RenderConfig {
             no_vsync: false,
             hdr: false,
+            max_sh_deg,
         },
         pc_file.and_then(|s| PathBuf::from_str(s.as_str()).ok()),
         scene_file.and_then(|s| PathBuf::from_str(s.as_str()).ok()),
